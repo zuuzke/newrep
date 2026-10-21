@@ -127,6 +127,9 @@ summary{cursor:pointer;font-weight:600}
 @media (prefers-reduced-motion:no-preference){.pausedveil .huge{animation:throb 1.6s ease-in-out infinite}}
 @media (prefers-reduced-motion:no-preference){.freveal .fgrid .ans{animation:pop .45s cubic-bezier(.2,1.4,.4,1) both;animation-delay:calc(1.2s + var(--i,0) * .15s)}}
 .board{list-style:none;padding:0;margin:0;width:min(640px,100%);display:flex;flex-direction:column;gap:10px}
+.board.many{gap:6px}.board.many li{padding:.3em .9em;font-size:1.1rem}
+.fgrid.many{grid-template-columns:repeat(auto-fit,minmax(170px,1fr));gap:10px}.fgrid.many .ans{min-height:0;padding:12px;gap:6px;font-size:clamp(.95rem,1.5vw,1.35rem)}.fgrid.many .ans .who .tag{font-size:clamp(.95rem,1.4vw,1.25rem);border-width:3px;box-shadow:3px 3px 0 var(--ink)}.fgrid.many .ans .pts{font-size:1.15rem}
+@media (max-height:820px){.stage .fgrid.many ~ *,.stage:has(.fgrid.many) .marquee{font-size:clamp(1.2rem,2.6vw,2rem);padding:.4em .8em}}
 .board li{display:flex;align-items:center;gap:14px;background:var(--card);border:3px solid var(--c,var(--line));border-radius:16px;padding:.55em 1em;font-size:1.35rem;font-weight:800}
 .board .rank{font-size:1.3rem;min-width:1.6em}
 .board .sc{margin-left:auto;font-family:Bungee, Impact, sans-serif;font-weight:400}
@@ -267,7 +270,8 @@ function startTicker(fn){
   }catch(e){}
   setInterval(fn, 250);
 }
-const COLORS = ["#FF4F8B","#22C7B8","#FFC83D","#9B8CFF","#FF8A3D","#5ED36B","#4FB3FF","#F27BF2"];
+const COLORS = ["#FF4F8B","#22C7B8","#FFC83D","#9B8CFF","#FF8A3D","#5ED36B","#4FB3FF","#F27BF2","#F25C54","#9BE15D","#FFB3D1","#B8A089"];
+const MAX_PLAYERS = 12;
 const T = { answer:120000, vote:40000, reveal:13000, scores:11000, intro:4500, fanswer:100000, fvote:50000, freveal:18000 };
 const BANK_EN = window.ZINGERS_PROMPTS || { clean:[], cheeky:[], finals:[] };
 /* ---------- language ---------- */
@@ -645,7 +649,7 @@ const AIB = window.ZINGERS_AI || { answers:{}, fallback:{en:[],nl:[]}, names:{en
 function isBot(pid){ return typeof pid==="string" && pid.startsWith("ai-"); }
 function humanCount(){ return lobbyPlayers().filter(p=>!isBot(p.pid)).length; }
 function addBot(){
-  if(lobbyPlayers().length >= 8) return;
+  if(lobbyPlayers().length >= MAX_PLAYERS) return;
   const taken = new Set(H.bots.map(b=>b.name));
   const pool = (AIB.names[lang()]||[]).concat(AIB.names.en||[]).filter(n=>!taken.has(n));
   const name = pool[0] || ("Bot "+(H.bots.length+1));
@@ -713,7 +717,7 @@ async function freeCall(sys, user, deadline){
     const ctl = new AbortController(), tm = setTimeout(()=>ctl.abort(), Math.min(left, p.timeout));
     try{
       const r = await fetch(p.url, { method:"POST", headers:{ "Content-Type":"application/json" }, signal:ctl.signal,
-        body:JSON.stringify(Object.assign({ model:p.model, max_tokens:700, messages:[{ role:"system", content:sys }, { role:"user", content:user }] }, p.extra)) });
+        body:JSON.stringify(Object.assign({ model:p.model, max_tokens:1500, messages:[{ role:"system", content:sys }, { role:"user", content:user }] }, p.extra)) });
       if(!r.ok) continue;
       const j = await r.json(), c = (((j||{}).choices||[])[0]||{}).message;
       const parsed = parseAI(c && c.content);
@@ -765,18 +769,19 @@ function aiSend(tasks, kind, free, ans, pend){
   const room = { round:(kind==="answer"||kind==="votes") ? G.round : "final", games_played_in_this_room:H.gamesPlayed||0,
     players:G.players.map(p=>({ name:p.name, bot:isBot(p.pid) })), history:(H.humor||[]).slice(-40) };
   const ctl = new AbortController(), tm = setTimeout(()=>ctl.abort(), AI_WAIT);
+  const sent = tasks.map((t,i)=>Object.assign({}, t, { key:"k"+i }));   /* short keys: fewer tokens, faster, fits 12-player games */
   const call = free
-    ? freeCall(aiSystem(lang(), H.spice), "<room>\n"+JSON.stringify(room)+"\n</room>\n\nHandle each task (write an answer, or pick an option id for vote tasks):\n"+JSON.stringify(tasks), Date.now() + AI_WAIT - 500)
+    ? freeCall(aiSystem(lang(), H.spice), "<room>\n"+JSON.stringify(room)+"\n</room>\n\nHandle each task (write an answer, or pick an option id for vote tasks):\n"+JSON.stringify(sent), Date.now() + AI_WAIT - 500)
     : fetch(AI_URL, { method:"POST", headers:{ "Content-Type":"text/plain;charset=utf-8" }, signal:ctl.signal,
-        body:JSON.stringify({ bots:{ lang:lang(), mode:H.spice, round:room.round, games:room.games_played_in_this_room, players:room.players, history:room.history, tasks } }) })
+        body:JSON.stringify({ bots:{ lang:lang(), mode:H.spice, round:room.round, games:room.games_played_in_this_room, players:room.players, history:room.history, tasks:sent } }) })
         .then(r=>r.json());
   /* near-copies count too: "towel that never dries" = "a towel that never dries!" */
   const norm = x=>String(x||"").toLowerCase().replace(/[^\p{L}\p{N} ]/gu," ").replace(/\b(a|an|the|de|het|een)\b/g," ").replace(/\s+/g," ").trim();
   const seen = (H.humor||[]).flatMap(e=>(e.answers||[]).map(x=>norm(x.text))).filter(Boolean);
   const isCopy = a=>{ const n = norm(a); return !!n && seen.some(o=>o===n || (Math.min(o.length,n.length) >= 12 && (o.includes(n) || n.includes(o)))); };
   call.then(j=>{ const got = (j && typeof j.answers==="object" && j.answers) || {};
-      for(const t of tasks){
-        const a = clean(got[t.key], 400).replace(/^["']|["']$/g,"").trim(); if(!a) continue;
+      for(const [i,t] of tasks.entries()){
+        const a = clean(got["k"+i], 400).replace(/^["']|["']$/g,"").trim(); if(!a) continue;
         if(!t.vote && (a.length > 60 || a.split(/\s+/).length > 10)) continue;   /* too long: never cut it off mid-sentence, use the bank instead */
         if(!t.vote && isCopy(a)) continue;   /* a copy of an earlier answer: use the bank instead */
         if(t.vote){ if(t.vote.some(o=>o.id===a)) ans[t.key] = a; } else ans[t.key] = a;
@@ -856,7 +861,7 @@ function lobbyPlayers(){
     if(!H.colorOf[pid]) H.colorOf[pid] = COLORS[Object.keys(H.colorOf).length % COLORS.length];
     seen.set(pid,{pid,name});
   }
-  return [...seen.values(), ...H.bots].slice(0,8);
+  return [...seen.values(), ...H.bots].slice(0,MAX_PLAYERS);
 }
 const AWAY_MS = 15000;   /* a phone that stops checking in for this long isn't waited for any more */
 function alive(p){ return !p.hb || Date.now() - (p.seen||0) < AWAY_MS; }
@@ -886,7 +891,7 @@ function reclaim(){
 function addLatecomers(){
   const G = H.G, re = H.re || {};
   for(const p of lobbyPlayers()){
-    if(G.players.length >= 8) break;
+    if(G.players.length >= MAX_PLAYERS) break;
     if(isBot(p.pid) || re[p.pid] || G.players.some(x=>x.pid===p.pid)) continue;
     if(G.players.some(x=>!isBot(x.pid) && normName(x.name)===normName(p.name))) continue;   /* a returning player, handled by reclaim() */
     G.players.push({...p, color:H.colorOf[p.pid]}); G.scores[p.pid] = 0;
@@ -1144,7 +1149,7 @@ function statusList(done){
 }
 function ranked(sc){ return [...H.G.players].sort((a,b)=>(sc[b.pid]||0)-(sc[a.pid]||0)); }
 function boardList(rows, sc){
-  return h("ol",{class:"board"}, rows.map((p,i)=>h("li",{style:"--c:"+p.color,"data-pid":p.pid}, h("span",{class:"rank"},String(i+1)), p.name, h("span",{class:"sc"}, String(sc[p.pid]||0)))));
+  return h("ol",{class:"board"+(rows.length>8?" many":"")}, rows.map((p,i)=>h("li",{style:"--c:"+p.color,"data-pid":p.pid}, h("span",{class:"rank"},String(i+1)), p.name, h("span",{class:"sc"}, String(sc[p.pid]||0)))));
 }
 /* Scoreboard. With "prev" (scores before this round) it first shows the old order,
    then every name tag slides to its new place while the points count up. */
@@ -1222,7 +1227,7 @@ function hostView(){
             ? h("li",{class:"bot",style:"--c:"+H.colorOf[p.pid],"data-pid":p.pid}, h("span",{class:"bottag"},t("botTag")), p.name, h("button",{class:"chipx","aria-label":t("removeBot", p.name),title:t("removeBot", p.name),onclick:()=>removeBot(p.pid)},"×"))
             : h("li",{style:"--c:"+H.colorOf[p.pid],"data-pid":p.pid},p.name))) : h("p",{class:"muted"},t("waitingPlayers")),
         h("div",{class:"row"},
-          h("button",{class:"ghost",disabled: players.length>=8, onclick:addBot}, t("addBot")),
+          h("button",{class:"ghost",disabled: players.length>=MAX_PLAYERS, onclick:addBot}, t("addBot")),
           h("button",{class:"primary big",disabled: need>0 || humans<1, onclick:startGame}, need>0 ? t("needMore", need) : (humans<1 ? t("needHuman") : t("startGame")))),
         H.bots.length ? h("p",{class:"muted",style:"font-size:.95rem;margin:0"},t("botHint")) : null,
         h("p",{class:"muted",style:"font-size:.95rem"},t("keepOpen")));
@@ -1256,12 +1261,12 @@ function hostView(){
       break;
     case "fvote":
       body = h("section",{class:"stage"}, h("div",{class:"marquee"}, G.final.t),
-        h("div",{class:"fgrid"}, G.final.opts.map(o=>h("div",{class:"ans"}, h("span",{class:"num"},String(o.i+1)), h("div",{},o.t)))),
+        h("div",{class:"fgrid"+(G.final.opts.length>8?" many":"")}, G.final.opts.map(o=>h("div",{class:"ans"}, h("span",{class:"num"},String(o.i+1)), h("div",{},o.t)))),
         h("p",{class:"lead"},t("voteFav")), statusList(pid=>!!finalVote(pid)));
       break;
     case "freveal":
       body = h("section",{class:"stage freveal"}, h("div",{class:"marquee"}, G.final.t),
-        h("div",{class:"fgrid"}, [...G.final.res].sort((a,b)=>a.votes.length-b.votes.length).map((o,i)=>h("div",{class:"ans",style:"--i:"+i},
+        h("div",{class:"fgrid"+(G.final.opts.length>8?" many":"")}, [...G.final.res].sort((a,b)=>a.votes.length-b.votes.length).map((o,i)=>h("div",{class:"ans",style:"--i:"+i},
           h("div",{},o.t), whoTag(o.pid), h("div",{class:"pts"},"+"+o.pts),
           o.votes.length ? voteTags(o.votes) : null))));
       break;
